@@ -18,6 +18,7 @@ Examples:
 """
 
 from .block import (
+    BiFPN,
     C1,
     C2,
     C2PSA,
@@ -67,13 +68,17 @@ from .conv import (
     Conv,
     Conv2,
     ConvTranspose,
+    CoordAtt,
+    DySample,
     DWConv,
     DWConvTranspose2d,
+    ECA,
     Focus,
     GhostConv,
     Index,
     LightConv,
     RepConv,
+    SimAM,
     SpatialAttention,
 )
 from .head import (
@@ -131,6 +136,7 @@ __all__ = (
     "BNContrastiveHead",
     "Bottleneck",
     "BottleneckCSP",
+    "BiFPN",
     "C2f",
     "C2fAttn",
     "C2fCIB",
@@ -187,4 +193,8 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "CoordAtt",
+    "ECA",
+    "DySample",
+    "SimAM",
 )

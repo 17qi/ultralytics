@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, DySample, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -31,6 +31,7 @@ __all__ = (
     "BNContrastiveHead",
     "Bottleneck",
     "BottleneckCSP",
+    "BiFPN",
     "C2f",
     "C2fAttn",
     "C2fCIB",
@@ -100,6 +101,77 @@ class Proto(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through layers using an upsampled input image."""
         return self.cv3(self.cv2(self.upsample(self.cv1(x))))
+
+
+class BiFPN(nn.Module):
+    """Bi-directional Feature Pyramid Network for multi-scale fusion."""
+
+    def __init__(
+        self,
+        in_channels: int | list[int],
+        out_channels: int | None = None,
+        num_levels: int = 3,
+        eps: float = 1e-4,
+        use_dysample: bool = False,
+    ) -> None:
+        """Initialize BiFPN module.
+
+        Args:
+            in_channels (int | list[int]): Input channels per level.
+            out_channels (int | None): Output channels per level.
+            num_levels (int): Number of feature levels.
+            eps (float): Small constant for normalization stability.
+            use_dysample (bool): Use DySample for top-down upsampling.
+        """
+        super().__init__()
+        if isinstance(in_channels, int):
+            in_channels = [in_channels] * num_levels
+        self.num_levels = len(in_channels)
+        out_channels = in_channels[0] if out_channels is None else out_channels
+        self.eps = eps
+        self.reduce_convs = nn.ModuleList([Conv(c, out_channels, 1, 1) for c in in_channels])
+        self.td_convs = nn.ModuleList([Conv(out_channels, out_channels, 3, 1) for _ in range(self.num_levels - 1)])
+        self.out_convs = nn.ModuleList([Conv(out_channels, out_channels, 3, 1) for _ in range(self.num_levels - 1)])
+        self.downsamples = nn.ModuleList([Conv(out_channels, out_channels, 3, 2) for _ in range(self.num_levels - 1)])
+        self.w1 = nn.Parameter(torch.ones(self.num_levels - 1, 2))
+        self.w2 = nn.Parameter(torch.ones(self.num_levels - 1, 3))
+        self.upsamples = None
+        if use_dysample:
+            self.upsamples = nn.ModuleList([DySample(out_channels, scale=2) for _ in range(self.num_levels - 1)])
+
+    def _upsample(self, x: torch.Tensor, size: tuple[int, int], idx: int) -> torch.Tensor:
+        if self.upsamples is not None and x.shape[-2] * 2 == size[0] and x.shape[-1] * 2 == size[1]:
+            return self.upsamples[idx](x)
+        return F.interpolate(x, size=size, mode="nearest")
+
+    def forward(self, x: list[torch.Tensor]) -> list[torch.Tensor]:
+        """Apply BiFPN fusion on multi-scale features.
+
+        Args:
+            x (list[torch.Tensor]): Feature maps ordered from high to low resolution.
+
+        Returns:
+            (list[torch.Tensor]): Fused feature maps.
+        """
+        assert len(x) == self.num_levels, "Input feature count must match num_levels."
+        feats = [conv(feat) for conv, feat in zip(self.reduce_convs, x)]
+
+        td = [None] * self.num_levels
+        td[-1] = feats[-1]
+        for i in reversed(range(self.num_levels - 1)):
+            up = self._upsample(td[i + 1], feats[i].shape[-2:], i)
+            w = F.relu(self.w1[i])
+            w = w / (w.sum() + self.eps)
+            td[i] = self.td_convs[i](w[0] * feats[i] + w[1] * up)
+
+        out = [None] * self.num_levels
+        out[0] = td[0]
+        for i in range(1, self.num_levels):
+            down = self.downsamples[i - 1](out[i - 1])
+            w = F.relu(self.w2[i - 1])
+            w = w / (w.sum() + self.eps)
+            out[i] = self.out_convs[i - 1](w[0] * feats[i] + w[1] * td[i] + w[2] * down)
+        return out
 
 
 class HGStem(nn.Module):

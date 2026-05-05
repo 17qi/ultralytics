@@ -8,6 +8,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 __all__ = (
     "CBAM",
@@ -16,13 +17,17 @@ __all__ = (
     "Conv",
     "Conv2",
     "ConvTranspose",
+    "CoordAtt",
+    "DySample",
     "DWConv",
     "DWConvTranspose2d",
+    "ECA",
     "Focus",
     "GhostConv",
     "Index",
     "LightConv",
     "RepConv",
+    "SimAM",
     "SpatialAttention",
 )
 
@@ -266,6 +271,58 @@ class ConvTranspose(nn.Module):
             (torch.Tensor): Output tensor.
         """
         return self.act(self.conv_transpose(x))
+
+
+class DySample(nn.Module):
+    """Dynamic sampling upsample module for small-object feature refinement."""
+
+    def __init__(self, c1: int, scale: int = 2, k: int = 1) -> None:
+        """Initialize DySample module.
+
+        Args:
+            c1 (int): Number of input channels.
+            scale (int): Upsample scale factor.
+            k (int): Offset prediction kernel size.
+        """
+        super().__init__()
+        self.scale = scale
+        self.offset = nn.Conv2d(c1, 2 * scale * scale, k, 1, autopad(k), bias=True)
+        nn.init.zeros_(self.offset.weight)
+        nn.init.zeros_(self.offset.bias)
+        self.act = nn.Tanh()
+        self._grid_cache: dict[tuple[torch.device, torch.dtype, int, int], torch.Tensor] = {}
+
+    def _base_grid(self, x: torch.Tensor, oh: int, ow: int) -> torch.Tensor:
+        key = (x.device, x.dtype, oh, ow)
+        grid = self._grid_cache.get(key)
+        if grid is None:
+            grid_y, grid_x = torch.meshgrid(
+                torch.linspace(-1, 1, oh, device=x.device, dtype=x.dtype),
+                torch.linspace(-1, 1, ow, device=x.device, dtype=x.dtype),
+                indexing="ij",
+            )
+            grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0)
+            self._grid_cache[key] = grid
+        return grid
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply dynamic sampling to input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Upsampled tensor.
+        """
+        b, _, h, w = x.shape
+        oh, ow = h * self.scale, w * self.scale
+        base_grid = self._base_grid(x, oh, ow).expand(b, -1, -1, -1)
+        offset = F.pixel_shuffle(self.offset(x), self.scale)  # (B, 2, oh, ow)
+        norm = torch.tensor(
+            [2 / max(ow - 1, 1), 2 / max(oh - 1, 1)], device=x.device, dtype=x.dtype
+        ).view(1, 1, 1, 2)
+        offset = self.act(offset).permute(0, 2, 3, 1) * norm
+        return F.grid_sample(x, base_grid + offset, mode="bilinear", padding_mode="zeros", align_corners=True)
 
 
 class Focus(nn.Module):
@@ -611,6 +668,118 @@ class CBAM(nn.Module):
             (torch.Tensor): Attended output tensor.
         """
         return self.spatial_attention(self.channel_attention(x))
+
+
+class ECA(nn.Module):
+    """Efficient Channel Attention module.
+
+    Reference:
+        https://arxiv.org/abs/1910.03151
+    """
+
+    def __init__(self, channels: int, gamma: int = 2, b: int = 1) -> None:
+        """Initialize ECA module.
+
+        Args:
+            channels (int): Number of input channels.
+            gamma (int): Kernel size scaling factor.
+            b (int): Kernel size bias term.
+        """
+        super().__init__()
+        k = int(abs((math.log2(channels) / gamma) + b))
+        k = k if k % 2 else k + 1
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k // 2, bias=False)
+        self.act = nn.Sigmoid()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply channel attention to input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Attended output tensor.
+        """
+        y = self.avg_pool(x).squeeze(-1).transpose(1, 2)  # (B, 1, C)
+        y = self.act(self.conv(y)).transpose(1, 2).unsqueeze(-1)
+        return x * y
+
+
+class CoordAtt(nn.Module):
+    """Coordinate Attention module for enhanced spatial encoding.
+
+    Reference:
+        https://arxiv.org/abs/2103.02907
+    """
+
+    def __init__(self, c1: int, c2: int | None = None, reduction: int = 32) -> None:
+        """Initialize CoordAtt module.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int | None): Number of output channels.
+            reduction (int): Channel reduction ratio.
+        """
+        super().__init__()
+        c2 = c1 if c2 is None else c2
+        mip = max(8, c1 // reduction)
+        self.conv1 = nn.Conv2d(c1, mip, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn1 = nn.BatchNorm2d(mip)
+        self.act = nn.SiLU()
+        self.conv_h = nn.Conv2d(mip, c2, kernel_size=1, stride=1, padding=0, bias=False)
+        self.conv_w = nn.Conv2d(mip, c2, kernel_size=1, stride=1, padding=0, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply coordinate attention to input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Attended output tensor.
+        """
+        n, c, h, w = x.shape
+        x_h = torch.mean(x, dim=3, keepdim=True)  # (B, C, H, 1)
+        x_w = torch.mean(x, dim=2, keepdim=True).transpose(2, 3)  # (B, C, W, 1)
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.act(self.bn1(self.conv1(y)))
+        x_h, x_w = torch.split(y, [h, w], dim=2)
+        x_w = x_w.transpose(2, 3)
+        a_h = torch.sigmoid(self.conv_h(x_h))
+        a_w = torch.sigmoid(self.conv_w(x_w))
+        return x * a_h * a_w
+
+
+class SimAM(nn.Module):
+    """Simple, parameter-free attention module.
+
+    Reference:
+        https://arxiv.org/abs/2103.06214
+    """
+
+    def __init__(self, eps: float = 1e-4) -> None:
+        """Initialize SimAM module.
+
+        Args:
+            eps (float): Small constant for numerical stability.
+        """
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply SimAM attention to input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            (torch.Tensor): Attended output tensor.
+        """
+        mean = x.mean(dim=(2, 3), keepdim=True)
+        var = (x - mean).pow(2).mean(dim=(2, 3), keepdim=True)
+        e = (x - mean).pow(2) / (4 * (var + self.eps)) + 0.5
+        return x * torch.sigmoid(e)
 
 
 class Concat(nn.Module):

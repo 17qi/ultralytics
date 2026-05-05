@@ -2,7 +2,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from ultralytics import YOLO
 if __name__ == '__main__':
-  model = YOLO('ultralytics\\cfg\\models\\26\\yolo26-pose.yaml')
+  model = YOLO(r'ultralytics\cfg\models\11\yolo11-P2.yaml')
   # model.load('yolo11n.pt')  #注释则不加载
   results = model.train(
     data=r'C:\git_lib\YOLO_test\ultralytics\data_3_yolo_mix\weed_lettuce.yaml',  #数据集配置文件的路径

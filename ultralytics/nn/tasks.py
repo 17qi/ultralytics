@@ -13,6 +13,7 @@ import torch.nn as nn
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
     AIFI,
+    BiFPN,
     C1,
     C2,
     C2PSA,
@@ -45,6 +46,7 @@ from ultralytics.nn.modules import (
     Conv2,
     ConvTranspose,
     Detect,
+    DySample,
     DWConv,
     DWConvTranspose2d,
     Focus,
@@ -1678,6 +1680,23 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m is DySample:
+            args = [ch[f], *args]
+            c2 = ch[f]
+        elif m is BiFPN:
+            in_ch = [ch[x] for x in f]
+            args = [in_ch, *args]
+            if len(args) < 2:
+                args.append(None)
+            if len(args) < 3:
+                args.append(len(in_ch))
+            if args[1] is not None:
+                c2 = make_divisible(min(args[1], max_channels) * width, 8)
+                args[1] = c2
+            else:
+                c2 = in_ch[0]
+            if args[2] is not None and args[2] != len(in_ch):
+                args[2] = len(in_ch)
         elif m in frozenset(
             {
                 Detect,
@@ -1710,7 +1729,9 @@ def parse_model(d, ch, verbose=True):
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
-        elif m in frozenset({TorchVision, Index}):
+        elif m is Index:
+            c2 = ch[f]
+        elif m is TorchVision:
             c2 = args[0]
             c1 = ch[f]
             args = [*args[1:]]
