@@ -1,24 +1,32 @@
 import warnings
+from pathlib import Path
+
 warnings.filterwarnings('ignore')
 from ultralytics import YOLO
 if __name__ == '__main__':
-  model = YOLO(r'ultralytics\cfg\models\11\yolo11-P2.yaml')
+  model = YOLO(r'ultralytics\cfg\models\11\yolo11-BiFPN-DySample-P3P5.yaml')
   # model.load('yolo11n.pt')  #注释则不加载
-  results = model.train(
-    data=r'C:\git_lib\YOLO_test\ultralytics\data_3_yolo_mix\weed_lettuce.yaml',  #数据集配置文件的路径
-    epochs=300,  #训练轮次总数
-    batch=4,  #批量大小，即单次输入多少图片训练
-    imgsz=640,  #训练图像尺寸
-    workers=0,  #加载数据的工作线程数
-    device= 0,  #指定训练的计算设备，无nvidia显卡则改为 'cpu'
-    optimizer='AdamW',  #训练使用优化器，可选 auto,SGD,Adam,AdamW 等
-    amp= True,  #True 或者 False, 解释为：自动混合精度(AMP) 训练
-    cache=False,  # True 在内存中缓存数据集图像，服务器推荐开启
-    # close_mosaic_border=False,  # True 删除边界的mosaic图像
-    save=True,  # True 保存训练结果
-    # resume=False,  # True 恢复训练
-    # freeze_layers=0,  # 冻结层数，
-)
+  train_args = {
+    "data": r"C:\git_lib\YOLO_test\ultralytics\data_3_yolo_mix\weed_lettuce.yaml",  #数据集配置文件的路径
+    "epochs": 300,  #训练轮次总数
+    "batch": 4,  #批量大小，即单次输入多少图片训练
+    "imgsz": 640,  #训练图像尺寸
+    "workers": 0,  #加载数据的工作线程数
+    "device": 0,  #指定训练的计算设备，无nvidia显卡则改为 'cpu'
+    "optimizer": "AdamW",  #训练使用优化器，可选 auto,SGD,Adam,AdamW 等
+    "amp": True,  #True 或者 False, 解释为：自动混合精度(AMP) 训练
+    "cache": False,  # True 在内存中缓存数据集图像，服务器推荐开启
+    # "close_mosaic_border": False,  # True 删除边界的mosaic图像
+    "save": True,  # True 保存训练结果
+    # "resume": False,  # True 恢复训练
+    # "freeze_layers": 0,  # 冻结层数，
+  }
+  results = model.train(**train_args)
+  save_dir = Path(getattr(model.trainer, "save_dir", "runs/train"))
+  args_path = save_dir / "args.txt"
+  with args_path.open("a", encoding="utf-8") as f:
+    f.write("\n".join(f"{k}={v}" for k, v in train_args.items()))
+    f.write("\n")
   
   #命令行方式运行
   # yolo task=detect mode=train model=yolov8n.yaml pretrained=yolov8n.pt data=data.yaml epochs=200 imgsz=640 device=0 workers=8 batch=64 amp=False optimizer='SGD' cache=False
