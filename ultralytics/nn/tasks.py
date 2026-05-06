@@ -27,7 +27,7 @@ from ultralytics.nn.modules import (
     SPPELAN,
     SPPF,
     A2C2f,
-    AConv,
+            AConv,
     ADown,
     Bottleneck,
     BottleneckCSP,
@@ -43,6 +43,7 @@ from ultralytics.nn.modules import (
     Classify,
     Concat,
     Conv,
+    SPDConv,
     Conv2,
     ConvTranspose,
     Detect,
@@ -1602,7 +1603,6 @@ def parse_model(d, ch, verbose=True):
             C3,
             C3TR,
             C3Ghost,
-            torch.nn.ConvTranspose2d,
             DWConvTranspose2d,
             C3x,
             RepC3,
@@ -1618,6 +1618,7 @@ def parse_model(d, ch, verbose=True):
             C1,
             C2,
             C2f,
+            SPDConv,
             C3k2,
             C2fAttn,
             C3,
@@ -1668,6 +1669,15 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
+        elif m is SPDConv:
+            # SPDConv: PixelUnshuffle(2) then non-strided Conv
+            # YAML: [-1, 1, SPDConv, [C_out, k]] -> construct as (c1=input_ch, c2=C_out, k=k)
+            c1 = ch[f]
+            c2 = args[0]
+            if c2 != nc:
+                c2 = make_divisible(min(c2, max_channels) * width, 8)
+                args[0] = c2
+            args = [c1, c2, *args[1:]]
         elif m in frozenset({HGStem, HGBlock}):
             c1, cm, c2 = ch[f], args[0], args[1]
             args = [c1, cm, c2, *args[2:]]

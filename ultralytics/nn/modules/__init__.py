@@ -70,6 +70,7 @@ from .conv import (
     ConvTranspose,
     CoordAtt,
     DySample,
+    SPDConv,
     DWConv,
     DWConvTranspose2d,
     ECA,
@@ -196,5 +197,6 @@ __all__ = (
     "CoordAtt",
     "ECA",
     "DySample",
+    "SPDConv",
     "SimAM",
 )

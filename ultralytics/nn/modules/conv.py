@@ -23,6 +23,7 @@ __all__ = (
     "DWConvTranspose2d",
     "ECA",
     "Focus",
+    "SPDConv",
     "GhostConv",
     "Index",
     "LightConv",
@@ -355,6 +356,38 @@ class Focus(nn.Module):
         """
         return self.conv(torch.cat((x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]), 1))
         # return self.conv(self.contract(x))
+
+
+class SPDConv(nn.Module):
+    """
+    SPD-Conv: space-to-depth downsampling followed by a non-strided convolution.
+
+    It replaces stride-2 convolution to reduce information loss for small-object detection.
+    """
+
+    def __init__(self, c1, c2, k=3, p=None, g=1, act=True):
+        """Create an SPDConv module.
+
+        Args:
+            c1 (int): input channels
+            c2 (int): output channels
+            k (int): kernel size for the non-strided conv
+            p (int|None): padding (passed to Conv)
+            g (int): groups for Conv
+            act (bool|nn.Module): activation
+        """
+        super().__init__()
+        self.spd = nn.PixelUnshuffle(2)
+        # PixelUnshuffle reduces spatial dims by 2 and multiplies channels by 4
+        self.conv = Conv(c1 * 4, c2, k=k, s=1, p=p, g=g, act=act)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass: space-to-depth then non-strided conv.
+
+        Input: (B, C, H, W) -> PixelUnshuffle -> (B, 4C, H/2, W/2)
+        Output: (B, C_out, H/2, W/2)
+        """
+        return self.conv(self.spd(x))
 
 
 class GhostConv(nn.Module):
