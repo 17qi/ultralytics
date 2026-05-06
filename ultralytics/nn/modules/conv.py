@@ -277,53 +277,45 @@ class DySample(nn.Module):
     """Dynamic sampling upsample module for small-object feature refinement."""
 
     def __init__(self, c1: int, scale: int = 2, k: int = 1) -> None:
-        """Initialize DySample module.
-
-        Args:
-            c1 (int): Number of input channels.
-            scale (int): Upsample scale factor.
-            k (int): Offset prediction kernel size.
-        """
         super().__init__()
         self.scale = scale
         self.offset = nn.Conv2d(c1, 2 * scale * scale, k, 1, autopad(k), bias=True)
+
+        # Start from near-regular sampling for stable training.
         nn.init.zeros_(self.offset.weight)
         nn.init.zeros_(self.offset.bias)
-        self.act = nn.Tanh()
-        self._grid_cache: dict[tuple[torch.device, torch.dtype, int, int], torch.Tensor] = {}
 
-    def _base_grid(self, x: torch.Tensor, oh: int, ow: int) -> torch.Tensor:
-        key = (x.device, x.dtype, oh, ow)
-        grid = self._grid_cache.get(key)
-        if grid is None:
-            grid_y, grid_x = torch.meshgrid(
-                torch.linspace(-1, 1, oh, device=x.device, dtype=x.dtype),
-                torch.linspace(-1, 1, ow, device=x.device, dtype=x.dtype),
-                indexing="ij",
-            )
-            grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0)
-            self._grid_cache[key] = grid
-        return grid
+        self.act = nn.Tanh()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply dynamic sampling to input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            (torch.Tensor): Upsampled tensor.
-        """
         b, _, h, w = x.shape
         oh, ow = h * self.scale, w * self.scale
-        base_grid = self._base_grid(x, oh, ow).expand(b, -1, -1, -1)
+
+        grid_y, grid_x = torch.meshgrid(
+            torch.linspace(-1, 1, oh, device=x.device, dtype=x.dtype),
+            torch.linspace(-1, 1, ow, device=x.device, dtype=x.dtype),
+            indexing="ij",
+        )
+
+        base_grid = torch.stack((grid_x, grid_y), dim=-1).unsqueeze(0)
+        base_grid = base_grid.expand(b, -1, -1, -1)
+
         offset = F.pixel_shuffle(self.offset(x), self.scale)  # (B, 2, oh, ow)
         norm = torch.tensor(
-            [2 / max(ow - 1, 1), 2 / max(oh - 1, 1)], device=x.device, dtype=x.dtype
+            [2 / max(ow - 1, 1), 2 / max(oh - 1, 1)],
+            device=x.device,
+            dtype=x.dtype,
         ).view(1, 1, 1, 2)
-        offset = self.act(offset).permute(0, 2, 3, 1) * norm
-        return F.grid_sample(x, base_grid + offset, mode="bilinear", padding_mode="zeros", align_corners=True)
 
+        offset = self.act(offset).permute(0, 2, 3, 1) * norm
+
+        return F.grid_sample(
+            x,
+            base_grid + offset,
+            mode="bilinear",
+            padding_mode="zeros",
+            align_corners=True,
+        )
 
 class Focus(nn.Module):
     """Focus module for concentrating feature information.
