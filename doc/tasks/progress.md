@@ -55,3 +55,12 @@ python -m pytest tests/test_audit_rgbd_dataset.py
 - 列无效比例：均值 0.1211，中位数 0.0359，P95 0.9928，最大值 1.0。
 - 无效边界候选：左侧无效列结束位置为 10（阈值 0.990）；右侧未检测到稳定无效区（-1）。
 - 叠加可视化：已生成 20 张，位于 reports/overlay_samples。
+
+## 模块进度
+- [x] yaml-path
+- [x] missing-labels
+- [x] empty-labels
+- [ ] name-mismatch
+- [ ] label-format
+- [ ] split-mismatch
+- [x] cache-stale
