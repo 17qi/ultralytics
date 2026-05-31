@@ -4,7 +4,7 @@ from pathlib import Path
 warnings.filterwarnings('ignore')
 from ultralytics import YOLO
 if __name__ == '__main__':
-  model = YOLO(r'ultralytics\cfg\models\11\yolo11-P2-DySample-BiFPN.yaml')
+  model = YOLO(r'ultralytics\cfg\models\11\yolo11.yaml')
   # model.load('yolo11n.pt')  #注释则不加载
   train_args = {
     "data": r"C:\git_lib\YOLO_test\ultralytics\rgbd_data_mass_1\dataset.yaml",  #数据集配置文件的路径

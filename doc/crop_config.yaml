@@ -1,0 +1,9 @@
+# config/crop_config.yaml
+source_width: 1280
+source_height: 720
+left_crop: 200
+right_crop: 120
+top_crop: 0
+bottom_crop: 0
+output_width: 960
+output_height: 720
