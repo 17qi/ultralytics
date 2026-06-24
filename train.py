@@ -4,10 +4,10 @@ from pathlib import Path
 warnings.filterwarnings('ignore')
 from ultralytics import YOLO
 if __name__ == '__main__':
-  model = YOLO(r'ultralytics\cfg\models\11\yolo11.yaml')
+  model = YOLO(r'ultralytics\cfg\models\v8\yolov8s-P2-DySample-BiFPN.yaml')
   # model.load('yolo11n.pt')  #注释则不加载
   train_args = {
-    "data": r"C:\git_lib\YOLO_test\ultralytics\rgbd_data_mass_1\dataset.yaml",  #数据集配置文件的路径
+    "data": r"C:\git_lib\YOLO_test\ultralytics\rgbd_data_mass_2_processed\data.yaml",  #数据集配置文件的路径
     "epochs": 300,  #训练轮次总数
     "batch": 4,  #批量大小，即单次输入多少图片训练
     "imgsz": 640,  #训练图像尺寸
